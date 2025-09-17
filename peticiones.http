@@ -1,0 +1,196 @@
+### Bienvenida
+GET http://127.0.0.1:8000/
+
+### Health check
+GET http://127.0.0.1:8000/health
+
+##########################################################
+# USUARIOS
+##########################################################
+
+### Crear usuario
+POST http://127.0.0.1:8000/usuarios/
+Content-Type: application/json
+
+{
+  "dni": "12345678",
+  "nombre": "Juan",
+  "apellido": "Pérez",
+  "telefono": "123456789",
+  "email": "juan@example.com",
+  "direccion": "Calle Falsa 123",
+  "es_admin": true
+}
+
+### Listar usuarios
+GET http://127.0.0.1:8000/usuarios/
+
+### Obtener usuario por DNI
+GET http://127.0.0.1:8000/usuarios/12345678
+
+### Actualizar usuario
+PUT http://127.0.0.1:8000/usuarios/12345678
+Content-Type: application/json
+
+{
+  "dni": "12345678",
+  "nombre": "Juan Carlos",
+  "apellido": "Pérez",
+  "telefono": "987654321",
+  "email": "juan_carlos@example.com",
+  "direccion": "Calle Siempre Viva 742",
+  "es_admin": false
+}
+
+### Eliminar usuario
+DELETE http://127.0.0.1:8000/usuarios/12345678
+
+
+##########################################################
+# OBRAS
+##########################################################
+
+### Crear obra
+POST http://127.0.0.1:8000/obras/
+Content-Type: application/json
+
+{
+  "nombre_obra": "Edificio Central",
+  "direccion": "Av. Libertador 1000",
+  "fecha_inicio": "2025-01-01",
+  "fecha_fin": "2025-12-31",
+  "estado": "En progreso"
+}
+
+### Listar obras
+GET http://127.0.0.1:8000/obras/
+
+### Obtener obra por ID
+GET http://127.0.0.1:8000/obras/1
+
+### Actualizar obra
+PUT http://127.0.0.1:8000/obras/1
+Content-Type: application/json
+
+{
+  "nombre_obra": "Edificio Renovado",
+  "direccion": "Av. Libertador 2000",
+  "fecha_inicio": "2025-02-01",
+  "fecha_fin": "2025-12-15",
+  "estado": "Finalizado"
+}
+
+### Eliminar obra
+DELETE http://127.0.0.1:8000/obras/1
+
+
+##########################################################
+# PRESUPUESTOS
+##########################################################
+
+### Crear presupuesto
+POST http://127.0.0.1:8000/presupuestos/
+Content-Type: application/json
+
+{
+  "id_obra": 1,
+  "monto": 1500000.50,
+  "tipo_materiales": "Cemento, acero, ladrillos"
+}
+
+### Listar presupuestos
+GET http://127.0.0.1:8000/presupuestos/
+
+### Obtener presupuesto por ID
+GET http://127.0.0.1:8000/presupuestos/1
+
+### Actualizar presupuesto
+PUT http://127.0.0.1:8000/presupuestos/1
+Content-Type: application/json
+
+{
+  "id_obra": 1,
+  "monto": 2000000.75,
+  "tipo_materiales": "Cemento reforzado, acero inoxidable"
+}
+
+### Eliminar presupuesto
+DELETE http://127.0.0.1:8000/presupuestos/1
+
+
+##########################################################
+# ASIGNACIONES
+##########################################################
+
+### Crear asignación
+POST http://127.0.0.1:8000/asignaciones/
+Content-Type: application/json
+
+{
+  "id_obra": 1,
+  "dni_usuario": "12345678",
+  "rol_empleado": "Arquitecto",
+  "fecha_asignacion": "2025-09-16",
+  "activo": true
+}
+
+### Listar asignaciones
+GET http://127.0.0.1:8000/asignaciones/
+
+### Obtener asignación por ID
+GET http://127.0.0.1:8000/asignaciones/1
+
+### Actualizar asignación
+PUT http://127.0.0.1:8000/asignaciones/1
+Content-Type: application/json
+
+{
+  "id_obra": 1,
+  "dni_usuario": "12345678",
+  "rol_empleado": "Ingeniero",
+  "fecha_asignacion": "2025-09-20",
+  "activo": false
+}
+
+### Eliminar asignación
+DELETE http://127.0.0.1:8000/asignaciones/1
+
+
+##########################################################
+# ASISTENCIAS
+##########################################################
+
+### Crear asistencia
+POST http://127.0.0.1:8000/asistencias/
+Content-Type: application/json
+
+{
+  "dni_usuario": "12345678",
+  "id_asignacion": 1,
+  "dia": "2025-09-16",
+  "estado": "Presente",
+  "hora_entrada": "08:00:00",
+  "hora_salida": "17:00:00"
+}
+
+### Listar asistencias
+GET http://127.0.0.1:8000/asistencias/
+
+### Obtener asistencia por ID
+GET http://127.0.0.1:8000/asistencias/1
+
+### Actualizar asistencia
+PUT http://127.0.0.1:8000/asistencias/1
+Content-Type: application/json
+
+{
+  "dni_usuario": "12345678",
+  "id_asignacion": 1,
+  "dia": "2025-09-17",
+  "estado": "Justificado",
+  "hora_entrada": "09:00:00",
+  "hora_salida": "15:00:00"
+}
+
+### Eliminar asistencia
+DELETE http://127.0.0.1:8000/asistencias/1
