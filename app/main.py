@@ -1,10 +1,19 @@
-# app/main.py
-from fastapi import FastAPI, Depends, HTTPException
-from typing import List
+from fastapi.middleware.cors import CORSMiddleware
+
+from fastapi import FastAPI, Depends, HTTPException, status
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from datetime import date, datetime, time
+from pydantic import BaseModel
+
+from fastapi.security import OAuth2PasswordRequestForm
 
 from app.database.database import get_db
+
+# Seguridad
+from app.security.jwt import create_access_token
+from app.security.auth import get_current_user
 
 # Modelos SQLAlchemy (módulos en PLURAL)
 from app.models.usuarios import User
@@ -28,6 +37,34 @@ app = FastAPI(
     description="API para gestionar usuarios, obras, presupuestos, asignaciones y asistencias",
     version="1.0.0",
 )
+
+# ---------------------------
+# LOGIN con JWT (usando dni + nombre)
+# ---------------------------
+
+class LoginRequest(BaseModel):
+    dni: str
+    nombre: str
+
+@app.post("/login")
+def login(data: LoginRequest, db: Session = Depends(get_db)):
+    """
+    Recibe: dni y nombre como JSON.
+    Devuelve: access_token Bearer JWT.
+    """
+    user = db.query(User).filter(User.dni == data.dni, User.nombre == data.nombre).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas")
+
+    # El subject del token será el dni
+    access_token = create_access_token(data={"sub": user.dni})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.get("/me", response_model=UsuarioResponse)
+def me(current_user: User = Depends(get_current_user)):
+    """Devuelve el usuario autenticado a partir del token Bearer."""
+    return current_user
 
 # ---------------------------
 # RUTA DE BIENVENIDA
@@ -54,10 +91,26 @@ async def health_check(db: Session = Depends(get_db)):
 def crear_usuario(data: UsuarioCreate, db: Session = Depends(get_db)):
     if db.get(User, data.dni):
         raise HTTPException(status_code=400, detail="El DNI ya existe")
-    if data.email and db.query(User).filter(User.email == data.email).first():
+
+    # Evitar duplicado de email/mail
+    # Preferimos 'mail' si tu modelo lo usa (como en auth.py). Si tu schema usa 'email', mapear a 'mail'.
+    email_value = getattr(data, "email", None) or getattr(data, "mail", None)
+    if email_value and db.query(User).filter(User.mail == email_value).first():
         raise HTTPException(status_code=400, detail="El email ya está en uso")
 
+    # Construcción del modelo
     nuevo = User(**data.dict())
+
+    # Si el schema trae password plano, lo hasheamos y lo guardamos en hashed_password
+    if hasattr(data, "password") and getattr(data, "password"):
+        hp = hash_password(getattr(data, "password"))
+        # asegurar atributo en el modelo
+        setattr(nuevo, "hashed_password", hp)
+
+    # Si el schema usa 'email' pero el modelo usa 'mail', mapear:
+    if hasattr(nuevo, "email") and hasattr(nuevo, "mail") and nuevo.email and not nuevo.mail:
+        nuevo.mail = nuevo.email  # mantener compatibilidad con auth.py
+
     db.add(nuevo)
     db.commit()
     db.refresh(nuevo)
@@ -80,12 +133,23 @@ def actualizar_usuario(dni: str, data: UsuarioCreate, db: Session = Depends(get_
     if not u:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    if data.email and data.email != u.email:
-        if db.query(User).filter(User.email == data.email).first():
+    email_value = getattr(data, "email", None) or getattr(data, "mail", None)
+    if email_value and email_value != getattr(u, "mail", None):
+        if db.query(User).filter(User.mail == email_value).first():
             raise HTTPException(status_code=400, detail="El email ya está en uso")
 
+    # actualizar campos simples
     for k, v in data.dict().items():
-        setattr(u, k, v)
+        # no pisar hashed_password por error si el schema no lo trae
+        if k == "password" and v:
+            # si envían password en update, re-hasheamos
+            setattr(u, "hashed_password", hash_password(v))
+        elif hasattr(u, k):
+            setattr(u, k, v)
+
+    # sincronizar email->mail si corresponde
+    if hasattr(u, "email") and hasattr(u, "mail") and getattr(u, "email", None):
+        u.mail = u.email
 
     db.commit()
     db.refresh(u)
@@ -151,7 +215,6 @@ def crear_presupuesto(data: PresupuestoCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
     if not db.get(Obra, data.id_obra):
         raise HTTPException(status_code=404, detail="La obra indicada no existe")
-
     nuevo = Presupuesto(**data.dict())
     db.add(nuevo)
     db.commit()
@@ -178,10 +241,8 @@ def actualizar_presupuesto(id_presupuesto: int, data: PresupuestoCreate, db: Ses
         raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
     if not db.get(Obra, data.id_obra):
         raise HTTPException(status_code=404, detail="La obra indicada no existe")
-
     for k, v in data.dict().items():
         setattr(p, k, v)
-
     db.commit()
     db.refresh(p)
     return p
@@ -204,7 +265,6 @@ def crear_asignacion(data: AsignacionCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="La obra indicada no existe")
     if not db.get(User, data.dni_usuario):
         raise HTTPException(status_code=404, detail="El usuario indicado no existe")
-
     nueva = Asignacion(**data.dict())
     db.add(nueva)
     db.commit()
@@ -227,15 +287,12 @@ def actualizar_asignacion(id_asignacion: int, data: AsignacionCreate, db: Sessio
     a = db.get(Asignacion, id_asignacion)
     if not a:
         raise HTTPException(status_code=404, detail="Asignación no encontrada")
-
     if not db.get(Obra, data.id_obra):
         raise HTTPException(status_code=404, detail="La obra indicada no existe")
     if not db.get(User, data.dni_usuario):
         raise HTTPException(status_code=404, detail="El usuario indicado no existe")
-
     for k, v in data.dict().items():
         setattr(a, k, v)
-
     db.commit()
     db.refresh(a)
     return a
@@ -250,19 +307,32 @@ def eliminar_asignacion(id_asignacion: int, db: Session = Depends(get_db)):
     return {"message": "Asignación eliminada correctamente"}
 
 # =====================================================
-# ASISTENCIAS
+# ASISTENCIAS (CRUD + Tomar asistencia)
 # =====================================================
 ESTADOS_VALIDOS = {"Presente", "Ausente", "Justificado"}
 
+class TomarAsistenciaBody(BaseModel):
+    dni_usuario: str
+    id_asignacion: int
+    dia: Optional[date] = None
+    estado: Optional[str] = "Presente"
+    hora_entrada: Optional[time] = None
+    hora_salida: Optional[time] = None
+
+def _validar_fk_asistencia(db: Session, dni_usuario: str, id_asignacion: int):
+    if not db.get(User, dni_usuario):
+        raise HTTPException(status_code=404, detail="El usuario (dni) no existe")
+    asign = db.get(Asignacion, id_asignacion)
+    if not asign:
+        raise HTTPException(status_code=404, detail="La asignación no existe")
+    if asign.dni_usuario != dni_usuario:
+        raise HTTPException(status_code=400, detail="La asignación no corresponde al usuario")
+
 @app.post("/asistencias/", response_model=AsistenciaResponse, status_code=201)
 def crear_asistencia(data: AsistenciaCreate, db: Session = Depends(get_db)):
-    if not db.get(User, data.dni_usuario):
-        raise HTTPException(status_code=404, detail="El usuario (dni) no existe")
-    if not db.get(Asignacion, data.id_asignacion):
-        raise HTTPException(status_code=404, detail="La asignación no existe")
+    _validar_fk_asistencia(db, data.dni_usuario, data.id_asignacion)
     if data.estado not in ESTADOS_VALIDOS:
         raise HTTPException(status_code=400, detail="Estado inválido")
-
     nuevo = Asistencia(**data.dict())
     db.add(nuevo)
     db.commit()
@@ -285,17 +355,11 @@ def actualizar_asistencia(id_asistencia: int, data: AsistenciaCreate, db: Sessio
     a = db.get(Asistencia, id_asistencia)
     if not a:
         raise HTTPException(status_code=404, detail="Asistencia no encontrada")
-
-    if not db.get(User, data.dni_usuario):
-        raise HTTPException(status_code=404, detail="El usuario (dni) no existe")
-    if not db.get(Asignacion, data.id_asignacion):
-        raise HTTPException(status_code=404, detail="La asignación no existe")
+    _validar_fk_asistencia(db, data.dni_usuario, data.id_asignacion)
     if data.estado not in ESTADOS_VALIDOS:
         raise HTTPException(status_code=400, detail="Estado inválido")
-
     for k, v in data.dict().items():
         setattr(a, k, v)
-
     db.commit()
     db.refresh(a)
     return a
@@ -309,6 +373,105 @@ def eliminar_asistencia(id_asistencia: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Asistencia eliminada correctamente"}
 
+@app.post("/asistencias/tomar", response_model=AsistenciaResponse, status_code=200)
+def tomar_asistencia(body: TomarAsistenciaBody, db: Session = Depends(get_db)):
+    dia = body.dia or date.today()
+    estado = body.estado or "Presente"
+    _validar_fk_asistencia(db, body.dni_usuario, body.id_asignacion)
+    if estado not in ESTADOS_VALIDOS:
+        raise HTTPException(status_code=400, detail="Estado inválido")
+    existente = (
+        db.query(Asistencia)
+        .filter(
+            Asistencia.dni_usuario == body.dni_usuario,
+            Asistencia.id_asignacion == body.id_asignacion,
+            Asistencia.dia == dia
+        )
+        .first()
+    )
+    if existente:
+        existente.estado = estado
+        if body.hora_entrada is not None:
+            existente.hora_entrada = body.hora_entrada
+        if body.hora_salida is not None:
+            existente.hora_salida = body.hora_salida
+        db.commit()
+        db.refresh(existente)
+        return existente
+    else:
+        nueva = Asistencia(
+            dni_usuario=body.dni_usuario,
+            id_asignacion=body.id_asignacion,
+            dia=dia,
+            estado=estado,
+            hora_entrada=body.hora_entrada,
+            hora_salida=body.hora_salida,
+        )
+        db.add(nueva)
+        db.commit()
+        db.refresh(nueva)
+        return nueva
+
+@app.post("/asistencias/{id_asignacion}/{dni}/entrada", response_model=AsistenciaResponse)
+def marcar_entrada(id_asignacion: int, dni: str, db: Session = Depends(get_db)):
+    _validar_fk_asistencia(db, dni, id_asignacion)
+    hoy = date.today()
+    ahora = datetime.now().time()
+    a = (
+        db.query(Asistencia)
+        .filter(
+            Asistencia.dni_usuario == dni,
+            Asistencia.id_asignacion == id_asignacion,
+            Asistencia.dia == hoy
+        )
+        .first()
+    )
+    if a:
+        a.estado = "Presente"
+        a.hora_entrada = ahora
+    else:
+        a = Asistencia(
+            dni_usuario=dni,
+            id_asignacion=id_asignacion,
+            dia=hoy,
+            estado="Presente",
+            hora_entrada=ahora
+        )
+        db.add(a)
+    db.commit()
+    db.refresh(a)
+    return a
+
+@app.post("/asistencias/{id_asignacion}/{dni}/salida", response_model=AsistenciaResponse)
+def marcar_salida(id_asignacion: int, dni: str, db: Session = Depends(get_db)):
+    _validar_fk_asistencia(db, dni, id_asignacion)
+    hoy = date.today()
+    ahora = datetime.now().time()
+    a = (
+        db.query(Asistencia)
+        .filter(
+            Asistencia.dni_usuario == dni,
+            Asistencia.id_asignacion == id_asignacion,
+            Asistencia.dia == hoy
+        )
+        .first()
+    )
+    if not a:
+        a = Asistencia(
+            dni_usuario=dni,
+            id_asignacion=id_asignacion,
+            dia=hoy,
+            estado="Presente",
+            hora_entrada=ahora,
+            hora_salida=ahora
+        )
+        db.add(a)
+    else:
+        a.hora_salida = ahora
+    db.commit()
+    db.refresh(a)
+    return a
+
 # ---------------------------
 # EJECUCIÓN LOCAL (DEV)
 # ---------------------------
@@ -316,3 +479,10 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
