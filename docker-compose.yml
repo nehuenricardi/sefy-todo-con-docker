@@ -1,0 +1,10 @@
+services:
+  backend:
+    build: ./backend   # 👈 construye la imagen a partir de tu Dockerfile en backend/
+    container_name: sefy_backend
+    environment:
+      DATABASE_URL: postgresql://postgres.gxmrdojlsrprfawrowgt:SEFY2007@aws-1-us-east-2.pooler.supabase.com:6543/postgres
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
